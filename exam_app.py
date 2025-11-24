@@ -1,130 +1,232 @@
 import streamlit as st
 import pandas as pd
-import os
+import random
 
-# --- 页面配置 ---
-st.set_page_config(page_title="全题库考试系统", layout="wide")
+# --- 1. 页面整体配置 ---
+st.set_page_config(
+    page_title="理论知识考试系统", 
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# --- 核心逻辑：万能读取函数 ---
+# --- 2. 样式美化 (CSS) ---
+st.markdown("""
+<style>
+    /* 调整主标题样式 */
+    .main-title {font-size: 32px; font-weight: bold; color: #2c3e50; text-align: center; margin-bottom: 20px;}
+    /* 题目样式 */
+    .question-box {background-color: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; border-left: 5px solid #4CAF50;}
+    .q-type-badge {background-color: #e8f5e9; color: #2e7d32; padding: 4px 8px; border-radius: 4px; font-size: 14px; font-weight: bold; margin-right: 10px;}
+    .q-text {font-size: 18px; font-weight: 600; color: #333;}
+    /* 答案解析区域 */
+    .answer-analysis {background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 10px; border: 1px solid #e9ecef;}
+</style>
+""", unsafe_allow_html=True)
+
+# --- 3. 核心功能函数 ---
 @st.cache_data
-def load_data():
-    # 1. 优先尝试读取 CSV
-    if os.path.exists("question_bank1.csv"):
-        try:
-            return pd.read_csv("question_bank1.csv").fillna("")
-        except Exception as e:
-            st.error(f"找到CSV但读取失败: {e}")
-            return None
-            
-    # 2. 其次尝试读取 Excel (xlsx)
-    elif os.path.exists("question_bank.xlsx"):
-        try:
-            return pd.read_excel("question_bank.xlsx").fillna("")
-        except Exception as e:
-            st.error(f"找到Excel但读取失败: {e}")
-            return None
-            
-    # 3. 如果都找不到，返回空
-    return None
+def load_excel_data(file_path):
+    try:
+        # 读取Excel，确保所有内容都读取为字符串，避免数字被转成浮点数
+        df = pd.read_csv(file_path, dtype=str)
+        df = df.fillna("") # 把空值填为空字符串
+        return df
+    except FileNotFoundError:
+        return None
 
-# --- 初始化 Session ---
+def reset_exam():
+    """重置考试状态"""
+    st.session_state.user_answers = {}
+    st.session_state.submitted = False
+    st.session_state.show_analysis = False
+    st.session_state.current_seed = random.randint(1, 100000) # 用于打乱题目
+
+# --- 4. 初始化 Session State ---
 if 'user_answers' not in st.session_state: st.session_state.user_answers = {}
 if 'submitted' not in st.session_state: st.session_state.submitted = False
-if 'exam_questions' not in st.session_state: st.session_state.exam_questions = []
+if 'exam_subset' not in st.session_state: st.session_state.exam_subset = []
+if 'current_seed' not in st.session_state: st.session_state.current_seed = 0
 
-# --- 侧边栏：设置与调试 ---
+# --- 5. 侧边栏：设置区 ---
 with st.sidebar:
-    st.title("⚙️ 考试设置")
+    st.title("⚙️ 考试控制台")
     
-    # 加载数据
-    df = load_data()
+    # 读取本地题库
+    df = load_excel_data("question_bank.csv")
     
-    if df is not None:
-        st.success(f"✅ 题库加载成功！共 {len(df)} 题")
-        # 题型统计
-        st.write(df['题型'].value_counts())
-        
-        sel_types = st.multiselect("题型过滤", df['题型'].unique(), default=df['题型'].unique())
-        if sel_types:
-            filtered = df[df['题型'].isin(sel_types)]
-            max_q = len(filtered)
-            num = st.number_input("题目数量", 1, max_q, min(20, max_q))
-            if st.button("开始考试", type="primary"):
-                st.session_state.exam_questions = filtered.sample(n=num).to_dict('records')
-                st.session_state.user_answers = {}
-                st.session_state.submitted = False
-                st.rerun()
-    else:
-        # === 调试信息：帮助你找到文件 ===
-        st.error("❌ 未找到题库文件！")
-        st.warning("调试模式：当前目录下的文件列表：")
-        st.code(os.listdir('.')) # 这一行会列出服务器上所有的文件
-        st.info("请确保上传了 'question_bank.csv' 或 'question_bank.xlsx'，且文件名大小写完全一致。")
+    if df is None:
+        st.error("❌ 未找到 'question_bank.xlsx'")
+        st.info("请先运行 generate_data.py 生成题库！")
+        st.stop()
+    
+    # 题库统计
+    type_counts = df['题型'].value_counts()
+    st.write("📊 **题库概览**")
+    st.dataframe(type_counts, use_container_width=True)
+    
+    st.divider()
+    
+    # 筛选设置
+    st.subheader("📝 出卷设置")
+    selected_types = st.multiselect(
+        "选择题型",
+        options=df['题型'].unique(),
+        default=df['题型'].unique()
+    )
+    
+    # 过滤数据
+    filtered_df = df[df['题型'].isin(selected_types)]
+    max_q = len(filtered_df)
+    
+    num_q = st.number_input(f"抽取题目数量 (最大 {max_q})", min_value=1, max_value=max_q, value=min(10, max_q))
+    
+    # 开始考试按钮
+    if st.button("🚀 生成新试卷", type="primary", use_container_width=True):
+        if max_q == 0:
+            st.error("没有符合条件的题目！")
+        else:
+            # 随机抽题
+            subset = filtered_df.sample(n=num_q).to_dict('records')
+            st.session_state.exam_subset = subset
+            reset_exam()
+            st.rerun()
 
-# --- 主界面 ---
-if st.session_state.exam_questions:
-    # 进度条
-    total = len(st.session_state.exam_questions)
-    current = len(st.session_state.user_answers)
-    st.progress(current / total if total > 0 else 0)
+# --- 6. 主界面：答题区 ---
+st.markdown('<div class="main-title">🎓 智能在线考试系统</div>', unsafe_allow_html=True)
+
+if not st.session_state.exam_subset:
+    st.info("👈 请在左侧侧边栏点击“生成新试卷”开始考试。")
+    st.write("目前题库已自动加载，包含单选、多选、填空和简答题。")
+else:
+    # 进度提示
+    total_q = len(st.session_state.exam_subset)
+    st.caption(f"当前试卷共 {total_q} 题")
     
-    with st.form("exam_form"):
-        for i, q in enumerate(st.session_state.exam_questions):
-            st.markdown(f"#### {i+1}. [{q['题型']}] {q['题目']}")
-            qid = f"q_{i}"
+    # 表单区域
+    with st.form(key=f"exam_form_{st.session_state.current_seed}"):
+        for i, q in enumerate(st.session_state.exam_subset):
+            q_type = q['题型']
+            q_title = q['题目']
+            q_id = f"q_{i}" # 唯一ID
             
-            # 单选
-            if q['题型'] == '单选':
-                ops = [f"{k[-1]}. {q[k]}" for k in ['选项A','选项B','选项C','选项D','选项E','选项F'] if str(q[k]).strip()]
-                st.radio("选项", ops, key=qid, label_visibility="collapsed", index=None)
+            # 题目渲染
+            st.markdown(f"""
+            <div class="question-box">
+                <span class="q-type-badge">{q_type}</span>
+                <span class="q-text">{i+1}. {q_title}</span>
+            </div>
+            """, unsafe_allow_html=True)
             
-            # 多选
-            elif q['题型'] == '多选':
-                st.caption("（多选题）")
-                for k in ['选项A','选项B','选项C','选项D','选项E','选项F']:
-                    if str(q[k]).strip():
-                        st.checkbox(f"{k[-1]}. {q[k]}", key=f"{qid}_{k[-1]}")
+            # 选项渲染逻辑
+            if q_type == '单选':
+                # 收集非空的选项
+                options = []
+                for opt_key in ['选项A', '选项B', '选项C', '选项D', '选项E']:
+                    if q[opt_key].strip():
+                        # 显示格式： "A. 内容"
+                        label = f"{opt_key[-1]}. {q[opt_key]}"
+                        options.append(label)
+                
+                # 单选组件
+                st.radio(
+                    "请选择:", 
+                    options, 
+                    key=q_id, 
+                    index=None, 
+                    label_visibility="collapsed"
+                )
+                
+            elif q_type == '多选':
+                st.caption("（请勾选所有正确选项）")
+                for opt_key in ['选项A', '选项B', '选项C', '选项D', '选项E']:
+                    if q[opt_key].strip():
+                        label = f"{opt_key[-1]}. {q[opt_key]}"
+                        # 多选使用 checkbox，key需要区分
+                        st.checkbox(label, key=f"{q_id}_{opt_key[-1]}")
+                        
+            elif q_type in ['填空', '简答']:
+                st.text_area("请输入答案：", key=q_id, height=100)
             
-            # 填空/简答
-            else:
-                st.text_area("你的答案", key=qid)
-            
-            st.divider()
-        
-        if st.form_submit_button("提交试卷", type="primary"):
+            st.write("") # 增加间距
+
+        st.divider()
+        # 提交按钮
+        submitted = st.form_submit_button("✅ 提交试卷", type="primary", use_container_width=True)
+        if submitted:
             st.session_state.submitted = True
             st.rerun()
 
-# --- 结果页 ---
+# --- 7. 结果分析区 ---
 if st.session_state.submitted:
-    st.markdown("### 📊 考试结果")
-    score = 0
-    obj_count = 0
+    st.markdown("### 📊 考试结果分析")
     
-    for i, q in enumerate(st.session_state.exam_questions):
-        correct = str(q['答案']).strip().upper().replace("，", ",")
+    score = 0
+    auto_check_count = 0 # 能够自动判分的题目数
+    
+    for i, q in enumerate(st.session_state.exam_subset):
+        q_type = q['题型']
+        correct_ans = q['答案'].strip().upper().replace("，", ",") # 标准化答案
+        user_ans_str = "未作答"
+        is_correct = False
         
-        if q['题型'] == '单选':
-            val = st.session_state.get(f"q_{i}")
-            user_ans = val[0] if val else "未作答"
-            if user_ans == correct: score+=1
-            obj_count += 1
-            st.info(f"第{i+1}题: {'✅ 正确' if user_ans==correct else '❌ 错误'} (你的答案: {user_ans} | 正确答案: {correct})")
+        st.markdown(f"**第 {i+1} 题 ({q_type})**")
+        
+        # --- 判分逻辑 ---
+        if q_type == '单选':
+            user_val = st.session_state.get(f"q_{i}")
+            if user_val:
+                user_ans_str = user_val[0] # 取 A. xxx 的 A
             
-        elif q['题型'] == '多选':
-            user_ops = []
-            for k in ['A','B','C','D','E','F']:
-                if st.session_state.get(f"q_{i}_{k}"): user_ops.append(k)
+            if user_ans_str == correct_ans:
+                score += 1
+                is_correct = True
+            auto_check_count += 1
             
-            user_set = set(user_ops)
-            corr_set = set(correct.split(','))
+        elif q_type == '多选':
+            # 收集用户选的所有选项
+            user_opts = []
+            for char in ['A', 'B', 'C', 'D', 'E']:
+                if st.session_state.get(f"q_{i}_{char}"):
+                    user_opts.append(char)
             
-            if user_set == corr_set: score+=1
-            obj_count += 1
-            st.info(f"第{i+1}题: {'✅ 正确' if user_set==corr_set else '❌ 错误'} (正确答案: {correct})")
+            if user_opts:
+                user_ans_str = ",".join(user_opts)
+            
+            # 集合比较 (忽略顺序)
+            if set(user_opts) == set(correct_ans.split(',')):
+                score += 1
+                is_correct = True
+            auto_check_count += 1
             
         else:
-            st.warning(f"第{i+1}题 (主观题): 参考答案 -> {correct}")
+            # 主观题
+            user_ans_str = st.session_state.get(f"q_{i}", "")
+            # 主观题不自动计分，只展示
+            is_correct = None 
 
-    if obj_count > 0:
-        st.metric("客观题得分", f"{score} / {obj_count}")
+        # --- 显示反馈 ---
+        if is_correct is True:
+            st.success("✅ 回答正确")
+        elif is_correct is False:
+            st.error(f"❌ 回答错误。正确答案是：{correct_ans}")
+        else:
+            st.warning(f"📝 主观题请自行核对。参考答案：{correct_ans}")
+
+        # 显示解析
+        if q['解析']:
+            st.info(f"💡 解析：{q['解析']}")
+        
+        st.divider()
+
+    # 显示总分 (仅计算客观题)
+    if auto_check_count > 0:
+        final_score = (score / auto_check_count) * 100
+        st.markdown(f"""
+        <div style="background-color:#d4edda; color:#155724; padding:20px; border-radius:10px; text-align:center;">
+            <h2>客观题得分：{final_score:.1f} 分</h2>
+            <p>答对 {score} / {auto_check_count} 题</p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("本试卷全为主观题，请参考答案自行评分。")
