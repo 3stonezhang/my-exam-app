@@ -53,7 +53,7 @@ with st.sidebar:
     st.title("⚙️ 考试控制台")
     
     # 读取本地题库
-    df = load_excel_data("question_bank1.csv")
+    df = load_excel_data("question_bank2.csv")
     
     if df is None:
         st.error("❌ 未找到 'question_bank.xlsx'")
