@@ -9,9 +9,9 @@ st.set_page_config(page_title="全题库考试系统", layout="wide")
 @st.cache_data
 def load_data():
     # 1. 优先尝试读取 CSV
-    if os.path.exists("question_bank.csv"):
+    if os.path.exists("question_bank1.csv"):
         try:
-            return pd.read_csv("question_bank.csv").fillna("")
+            return pd.read_csv("question_bank1.csv").fillna("")
         except Exception as e:
             st.error(f"找到CSV但读取失败: {e}")
             return None
